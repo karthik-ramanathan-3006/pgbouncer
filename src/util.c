@@ -149,7 +149,7 @@ bool tune_socket(int sock, bool is_unix)
 		errpos = "setsockopt/TCP_USER_TIMEOUT";
 #ifdef TCP_USER_TIMEOUT
 		val = cf_tcp_user_timeout;
-		res = setsockopt(sock, IPPROTO_TCP, TCP_USER_TIMEOUT, &val, sizeof(val));
+		res = ff_setsockopt(sock, IPPROTO_TCP, TCP_USER_TIMEOUT, &val, sizeof(val));
 		if (res < 0)
 			goto fail;
 #else
@@ -164,12 +164,12 @@ bool tune_socket(int sock, bool is_unix)
 	if (cf_tcp_socket_buffer) {
 		val = cf_tcp_socket_buffer;
 		errpos = "setsockopt/SO_SNDBUF";
-		res = setsockopt(sock, SOL_SOCKET, SO_SNDBUF, &val, sizeof(val));
+		res = ff_setsockopt(sock, SOL_SOCKET, SO_SNDBUF, &val, sizeof(val));
 		if (res < 0)
 			goto fail;
 		val = cf_tcp_socket_buffer;
 		errpos = "setsockopt/SO_RCVBUF";
-		res = setsockopt(sock, SOL_SOCKET, SO_RCVBUF, &val, sizeof(val));
+		res = ff_setsockopt(sock, SOL_SOCKET, SO_RCVBUF, &val, sizeof(val));
 		if (res < 0)
 			goto fail;
 	}
@@ -179,7 +179,7 @@ bool tune_socket(int sock, bool is_unix)
 	 */
 	val = 1;
 	errpos = "setsockopt/TCP_NODELAY";
-	res = setsockopt(sock, IPPROTO_TCP, TCP_NODELAY, &val, sizeof(val));
+	res = ff_setsockopt(sock, IPPROTO_TCP, TCP_NODELAY, &val, sizeof(val));
 	if (res < 0)
 		goto fail;
 	return true;
@@ -249,7 +249,7 @@ void fill_remote_addr(PgSocket *sk, int fd, bool is_unix)
 		dst->scred.uid = uid;
 		dst->scred.pid = pid;
 	} else {
-		err = getpeername(fd, (struct sockaddr *)dst, &len);
+		err = ff_getpeername(fd, (struct sockaddr *)dst, &len);
 		if (err < 0) {
 			log_error("fill_remote_addr: getpeername(%d) = %s",
 				  fd, strerror(errno));
@@ -268,7 +268,7 @@ void fill_local_addr(PgSocket *sk, int fd, bool is_unix)
 		dst->scred.uid = geteuid();
 		dst->scred.pid = getpid();
 	} else {
-		err = getsockname(fd, (struct sockaddr *)dst, &len);
+		err = ff_getsockname(fd, (struct sockaddr *)dst, &len);
 		if (err < 0) {
 			log_error("fill_local_addr: getsockname(%d) = %s",
 				  fd, strerror(errno));

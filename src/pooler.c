@@ -98,7 +98,7 @@ static bool add_listen(int af, const struct sockaddr *sa, int salen)
 
 	/* create socket */
 	errpos = "socket";
-	sock = socket(af, SOCK_STREAM, 0);
+	sock = ff_socket(af, SOCK_STREAM, 0);
 	if (sock < 0)
 		goto failed;
 
@@ -108,7 +108,7 @@ static bool add_listen(int af, const struct sockaddr *sa, int salen)
 	if (af != AF_UNIX) {
 		int val = 1;
 		errpos = "setsockopt";
-		res = setsockopt(sock, SOL_SOCKET, SO_REUSEADDR, &val, sizeof(val));
+		res = ff_setsockopt(sock, SOL_SOCKET, SO_REUSEADDR, &val, sizeof(val));
 		if (res < 0)
 			goto failed;
 	}
@@ -119,7 +119,7 @@ static bool add_listen(int af, const struct sockaddr *sa, int salen)
 	if (af == AF_INET6) {
 		int val = 1;
 		errpos = "setsockopt/IPV6_V6ONLY";
-		res = setsockopt(sock, IPPROTO_IPV6, IPV6_V6ONLY, &val, sizeof(val));
+		res = ff_setsockopt(sock, IPPROTO_IPV6, IPV6_V6ONLY, &val, sizeof(val));
 		if (res < 0)
 			goto failed;
 	}
@@ -141,7 +141,7 @@ static bool add_listen(int af, const struct sockaddr *sa, int salen)
 #elif defined(SO_REUSEPORT)
 		int val = 1;
 		errpos = "setsockopt/SO_REUSEPORT";
-		res = setsockopt(sock, SOL_SOCKET, SO_REUSEPORT, &val, sizeof(val));
+		res = ff_setsockopt(sock, SOL_SOCKET, SO_REUSEPORT, &val, sizeof(val));
 		if (res < 0)
 			goto failed;
 #else
@@ -151,7 +151,7 @@ static bool add_listen(int af, const struct sockaddr *sa, int salen)
 
 	/* bind it */
 	errpos = "bind";
-	res = bind(sock, sa, salen);
+	res = ff_bind(sock, sa, salen);
 	if (res < 0)
 		goto failed;
 
@@ -162,7 +162,7 @@ static bool add_listen(int af, const struct sockaddr *sa, int salen)
 
 	/* finally, accept connections */
 	errpos = "listen";
-	res = listen(sock, cf_listen_backlog);
+	res = ff_listen(sock, cf_listen_backlog);
 	if (res < 0)
 		goto failed;
 
@@ -256,11 +256,12 @@ static void tune_accept(int sock, bool on)
 #ifdef TCP_DEFER_ACCEPT
 	int val = 45; /* FIXME: proper value */
 	socklen_t vlen = sizeof(val);
-	if (getsockopt(sock, IPPROTO_TCP, TCP_DEFER_ACCEPT, &val, &vlen) == 0)
+	if (ff_getsockopt(sock, IPPROTO_TCP, TCP_DEFER_ACCEPT, &val, &vlen) == 0)
 		log_noise("old TCP_DEFER_ACCEPT on %d = %d", sock, val);
 	val = on ? 1 : 0;
 	log_noise("%s TCP_DEFER_ACCEPT on %d", act, sock);
-	res = setsockopt(sock, IPPROTO_TCP, TCP_DEFER_ACCEPT, &val, sizeof(val));
+	// TODO (kr3006): TCP_DEFER_ACCEPT does not seem to be supported on f-stack.
+	// res = ff_setsockopt(sock, IPPROTO_TCP, TCP_DEFER_ACCEPT, &val, sizeof(val));
 #else
 	if (on) {
 		errno = EINVAL;
@@ -352,7 +353,7 @@ loop:
 		return;
 	}
 
-	log_noise("new fd from accept=%d", fd);
+	log_info("new fd from accept()=%d", fd);
 	if (is_unix) {
 		client = accept_client(fd, true);
 	} else {
@@ -366,7 +367,9 @@ loop:
 	 * there may be several clients waiting,
 	 * avoid context switch by looping
 	 */
-	goto loop;
+	// For DPDK/F-Stack, we need the explicit context switching, to allow the
+	// packets to come through. Hence, disabling the looping.
+	// goto loop;
 }
 
 bool use_pooler_socket(int sock, bool is_unix)
@@ -429,6 +432,7 @@ void resume_pooler(void)
 		ls = container_of(el, struct ListenSocket, node);
 		if (ls->active)
 			continue;
+		log_info("Adding event for pooler_accept()");
 		event_assign(&ls->ev, pgb_event_base, ls->fd, EV_READ | EV_PERSIST, pool_accept, ls);
 		if (event_add(&ls->ev, NULL) < 0) {
 			log_warning("event_add failed: %s", strerror(errno));
@@ -538,7 +542,7 @@ void pooler_setup(void)
 		if (!ok)
 			die("failed to parse listen_addr list: %s", cf_listen_addr);
 
-		if (cf_unix_socket_dir && *cf_unix_socket_dir)
+		if (false && cf_unix_socket_dir && *cf_unix_socket_dir)
 			create_unix_socket(cf_unix_socket_dir, cf_listen_port);
 	}
 

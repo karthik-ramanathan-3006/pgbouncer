@@ -20,6 +20,7 @@
  * core structures
  */
 
+#include "definitions.h"
 #include "system.h"
 
 #include <usual/cfparser.h>
@@ -29,8 +30,8 @@
 #include <usual/aatree.h>
 #include <usual/socket.h>
 
-#include <event2/event.h>
-#include <event2/event_struct.h>
+#include <unusual/libevent.h>
+#include "ff_api.h"
 
 #ifdef USE_SYSTEMD
 #include <systemd/sd-daemon.h>

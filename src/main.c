@@ -72,6 +72,9 @@ struct DNSContext *adns;
 
 struct HBA *parsed_hba;
 
+int main_loop_count = 0, main_loop_counter = 0;
+void handle_signal(int signum);
+
 /*
  * configuration storage
  */
@@ -575,7 +578,7 @@ static void go_daemon(void)
 	dup2(fd, 1);
 	dup2(fd, 2);
 	if (fd > 2)
-		close(fd);
+		ff_close(fd);
 
 	/* fork new process */
 	pid = fork();
@@ -670,10 +673,10 @@ static void write_pidfile(void)
 	fd = open(cf_pidfile, O_WRONLY | O_CREAT | O_EXCL, 0644);
 	if (fd < 0)
 		die("could not open pidfile '%s': %s", cf_pidfile, strerror(errno));
-	res = safe_write(fd, buf, strlen(buf));
+	res = write(fd, buf, strlen(buf));
 	if (res < 0)
 		die("could not write pidfile '%s': %s", cf_pidfile, strerror(errno));
-	close(fd);
+	ff_close(fd);
 
 	/* only remove when we have it actually written */
 	atexit(remove_pidfile);
@@ -729,7 +732,7 @@ static bool check_old_process_unix(void)
 	snprintf(sa_un.sun_path, sizeof(sa_un.sun_path),
 		 "%s/.s.PGSQL.%d", cf_unix_socket_dir, cf_listen_port);
 
-	fd = socket(domain, SOCK_STREAM, 0);
+	fd = ff_socket(domain, SOCK_STREAM, 0);
 	if (fd < 0)
 		die("could not create socket: %s", strerror(errno));
 	res = safe_connect(fd, (struct sockaddr *)&sa_un, len);
@@ -743,6 +746,13 @@ static void main_loop_once(void)
 {
 	int err;
 
+	main_loop_counter++;
+	if (main_loop_counter == 100000) {
+		log_noise("[%%1000] Count: %d --> Initiating loop with base FD %d", main_loop_count, pgb_event_base->fd);
+		main_loop_count += 1;
+		main_loop_counter = 0;
+	}
+
 	reset_time_cache();
 
 	err = event_base_loop(pgb_event_base, EVLOOP_ONCE);
@@ -751,8 +761,8 @@ static void main_loop_once(void)
 			log_warning("event_loop failed: %s", strerror(errno));
 	}
 	pam_poll();
-	per_loop_maint();
-	reuse_just_freed_objects();
+	// per_loop_maint();
+	// reuse_just_freed_objects();
 	rescue_timers();
 	per_loop_pooler_maint();
 
@@ -934,6 +944,15 @@ int main(int argc, char *argv[])
 	atexit(cleanup);
 #endif
 
+	printf("Inside main, CMD setup done \n");
+#ifdef LIB_DPDK
+	char *new_argv[] = {"./pgbouncer", "--conf=~/f-stack/config.ini", "--proc-id=0", "--proc-type=primary"};
+	int ret = ff_init(4, new_argv);
+	if (ret < 0) {
+		printf("Received error code from ff_init: %s\n", strerror(errno));
+	}
+#endif
+
 	init_objects();
 	load_config();
 	main_config.loaded = true;
@@ -954,13 +973,17 @@ int main(int argc, char *argv[])
 		change_user(cf_username);
 
 	/* disallow running as root */
-	if (getuid() == 0)
-		die("PgBouncer should not run as root");
+	// if (getuid() == 0)
+	// 	die("PgBouncer should not run as root");
 
 	admin_setup();
 
+	// Add signal handling.
+	signal(SIGINT, handle_signal);
+	signal(SIGTERM, handle_signal);
+
 	if (cf_reboot) {
-		if (check_old_process_unix()) {
+		if (false && check_old_process_unix()) {
 			takeover_part1();
 			did_takeover = true;
 		} else {
@@ -973,6 +996,8 @@ int main(int argc, char *argv[])
 			die("unix socket is in use, cannot continue");
 		check_pidfile();
 	}
+
+	printf("Inside main, completed takeover \n");
 
 	if (cf_daemon)
 		go_daemon();
@@ -990,9 +1015,9 @@ int main(int argc, char *argv[])
 	srandom(time(NULL) ^ getpid());
 	if (!(pgb_event_base = event_base_new()))
 		die("event_base_new() failed");
-	dns_setup();
-	signal_setup();
-	janitor_setup();
+	// dns_setup();
+	// signal_setup();
+	// janitor_setup();
 	stats_setup();
 
 	pam_init();
@@ -1012,8 +1037,15 @@ int main(int argc, char *argv[])
 	sd_notify(0, "READY=1");
 
 	/* main loop */
-	while (cf_shutdown < 2)
-		main_loop_once();
+	// while (cf_shutdown < 2)
+	// 	main_loop_once();
+	ff_run(main_loop_once, NULL);
 
 	return 0;
+}
+
+void handle_signal(int signum)
+{
+    printf("\nExiting on signal %d\n\n", signum);
+    exit(0);
 }

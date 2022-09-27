@@ -393,6 +393,7 @@ void stats_setup(void)
 	old_stamp = new_stamp - USEC;
 
 	/* launch stats */
-	event_assign(&ev_stats, pgb_event_base, -1, EV_PERSIST, refresh_stats, NULL);
-	event_add(&ev_stats, &period);
+	// TODO (kr3006): Implement stats.
+	// event_assign(&ev_stats, pgb_event_base, -1, EV_PERSIST, refresh_stats, NULL);
+	// event_add(&ev_stats, &period);
 }

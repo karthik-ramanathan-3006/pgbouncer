@@ -29,6 +29,8 @@
 #include <usual/safeio.h>
 #include <usual/slab.h>
 
+#include <sys/ioctl.h>
+
 #ifdef USUAL_LIBSSL_FOR_TLS
 #define USE_TLS
 #endif
@@ -125,20 +127,28 @@ bool sbuf_accept(SBuf *sbuf, int sock, bool is_unix)
 	AssertSanity(sbuf);
 
 	sbuf->sock = sock;
-	if (!tune_socket(sock, is_unix))
+	if (!tune_socket(sock, is_unix)) {
+		log_error("Socket tuning failed for FD: %d", sock);
 		goto failed;
+	}
+
+	log_noise("Socket tuning succeeded for FD: %d", sock);
+
 
 	if (!cf_reboot) {
 		res = sbuf_wait_for_data(sbuf);
 		if (!res)
 			goto failed;
 		/* socket should already have some data (linux only) */
-		if (cf_tcp_defer_accept && !is_unix) {
+		if (false && cf_tcp_defer_accept && !is_unix) {
+			log_info("Waiting for data as TCP DEFER ACCEPT is enabled.");
 			sbuf_main_loop(sbuf, DO_RECV);
 			if (!sbuf->sock)
 				return false;
 		}
 	}
+
+	log_info("Finished processing accept from FD: %d.", sock);
 	return true;
 failed:
 	sbuf_call_proto(sbuf, SBUF_EV_RECV_FAILED);
@@ -158,19 +168,22 @@ bool sbuf_connect(SBuf *sbuf, const struct sockaddr *sa, socklen_t sa_len, time_
 	/*
 	 * common stuff
 	 */
-	sock = socket(sa->sa_family, SOCK_STREAM, 0);
+	sock = ff_socket(sa->sa_family, SOCK_STREAM, 0);
 	if (sock < 0) {
 		/* probably fd limit */
 		goto failed;
 	}
 
-	if (!tune_socket(sock, is_unix))
-		goto failed;
+	// if (!tune_socket(sock, is_unix))
+	// 	goto failed;
+
+	int on = 1;
+	ff_ioctl(sock, FIONBIO, &on);
 
 	sbuf->sock = sock;
 
-	timeout.tv_sec = timeout_sec;
-	timeout.tv_usec = 0;
+	timeout.tv_sec = 0;
+	timeout.tv_usec = 500 * 1000;
 
 	/* launch connection */
 	res = safe_connect(sock, sa, sa_len);
@@ -180,7 +193,7 @@ bool sbuf_connect(SBuf *sbuf, const struct sockaddr *sa, socklen_t sa_len, time_
 		return true;
 	} else if (errno == EINPROGRESS || errno == EAGAIN) {
 		/* tcp socket needs waiting */
-		event_assign(&sbuf->ev, pgb_event_base, sock, EV_WRITE, sbuf_connect_cb, sbuf);
+		event_assign(&sbuf->ev, pgb_event_base, sock, EV_WRITE | EV_READ, sbuf_connect_cb, sbuf);
 		res = event_add(&sbuf->ev, &timeout);
 		if (res >= 0) {
 			sbuf->wait_type = W_CONNECT;
@@ -226,6 +239,8 @@ void sbuf_continue(SBuf *sbuf)
 		return;
 	}
 
+	log_info("Continuing receive on the client socket");
+
 	/*
 	 * It's tempting to try to avoid the recv() but that would
 	 * only work if no code wants to see full packet.
@@ -237,7 +252,7 @@ void sbuf_continue(SBuf *sbuf)
 	 *	do_recv = false;
 	 */
 
-	sbuf_main_loop(sbuf, do_recv);
+	sbuf_main_loop(sbuf, SKIP_RECV);
 }
 
 /*
@@ -753,8 +768,10 @@ try_more:
 
 		/* now fetch the data */
 		ok = sbuf_actual_recv(sbuf, free);
-		if (!ok)
+		if (!ok) {
+			log_error("Sbuf receive failed, exiting sbuf loop");
 			return;
+		}
 	}
 
 skip_recv:
@@ -786,7 +803,7 @@ static bool sbuf_after_connect_check(SBuf *sbuf)
 	int optval = 0, err;
 	socklen_t optlen = sizeof(optval);
 
-	err = getsockopt(sbuf->sock, SOL_SOCKET, SO_ERROR, (void*)&optval, &optlen);
+	err = ff_getsockopt(sbuf->sock, SOL_SOCKET, SO_ERROR, (void*)&optval, &optlen);
 	if (err < 0) {
 		log_debug("sbuf_after_connect_check: getsockopt: %s",
 			  strerror(errno));
