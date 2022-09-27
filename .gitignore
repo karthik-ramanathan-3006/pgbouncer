@@ -27,3 +27,7 @@
 *.exe
 *.gz
 *.swp
+
+# DPDK specific ignores
+build/pgbouncer
+objs/
